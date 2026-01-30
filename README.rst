@@ -4,6 +4,7 @@
 
 pyqg: Python Quasigeostrophic Model
 ===================================
+*** Note: modifications have been made to this repository by Guillaume Lapeyre and Chiara Zelco in january 2026. 
 
 |DOI| |conda| |pypi| |Build Status| |codecov| |docs| |binder|
 
