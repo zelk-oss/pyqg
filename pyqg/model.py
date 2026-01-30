@@ -52,6 +52,8 @@ class Model(PseudoSpectralKernel):
         Velocity anomaly components in spectral space (`nk`, `nl`, `nk`) (cython)
     rek : float
         Linear drag in lower layer (cython)
+    nek : integer
+        Number to establish power of drag function (cython)
     t : float
         Model time (cython)
     tc : int
@@ -62,6 +64,8 @@ class Model(PseudoSpectralKernel):
         Domain length in x and y directions
     filterfac : float
         Amplitdue of the spectral spherical filter
+    cphi: float 
+        cutoff wavenumber
     twrite : int
         Interval for cfl writeout (units: number of timesteps)
     tmax : float
@@ -115,7 +119,9 @@ class Model(PseudoSpectralKernel):
         useAB2=False,               # use second order Adams Bashforth timestepping instead of 3rd
         # friction parameters
         rek=5.787e-7,               # linear drag in lower layer
-        filterfac=23.6,             # the factor for use in the exponential filter
+        nek=1,
+        filterfac=23.6, # the factor for use in the exponential filter
+        cphi = 30.0, 
         # constants
         f = None,                   # coriolis parameter (not necessary for two-layer model
                                     #  if deformation radius is provided)
@@ -151,9 +157,13 @@ class Model(PseudoSpectralKernel):
             Domain width in y direction. Units: meters (default: L).
         rek : number
             linear drag in lower layer. Units: seconds :sup:`-1`.
+        nek : number 
+            number to elevate friction function.
         filterfac : number
             amplitdue of the spectral spherical filter (originally 18.4, later
             changed to 23.6).
+        cphi: float 
+            cutoff wavenumber 
         dt : number
             Numerical timstep. Units: seconds.
         twrite : int
@@ -233,8 +243,11 @@ class Model(PseudoSpectralKernel):
 
         # friction
         self.rek = rek
+        self.nek = nek
         self.filterfac = filterfac
+        self.cphi = cphi
 
+        self.filtr[:,:] = 1.0
         # constants
         self.g = g
         if f:
@@ -375,7 +388,7 @@ class Model(PseudoSpectralKernel):
         L3 = np.einsum('ij...,jk...->ik...',L2,Uk+Vl) + 0j
 
         if bottom_friction:
-            L3[-1,-1,:,:] += 1j*self.rek*self.wv2
+            L3[-1,-1,:,:] += 1j*self.rek*(self.wv2**self.nek)
 
         L4 = self.a.T
 
@@ -411,8 +424,8 @@ class Model(PseudoSpectralKernel):
         self._do_advection()
         # use streamfunction to calculate advection tendency
 
-        self._do_friction()
-        # apply friction
+        # self._do_friction()
+        # apply friction  # remove GL
 
         self._do_external_forcing()
         # apply external forcing
@@ -496,11 +509,18 @@ class Model(PseudoSpectralKernel):
     def _initialize_filter(self):
         """Set up frictional filter."""
         # this defines the spectral filter (following Arbic and Flierl, 2003)
-        cphi=0.65*pi
-        wvx=np.sqrt((self.k*self.dx)**2.+(self.l*self.dy)**2.)
-        filtr = np.exp(-self.filterfac*(wvx-cphi)**4.)
-        filtr[wvx<=cphi] = 1.
-        self.filtr = filtr
+        wvx=np.sqrt((self.k)**2.+(self.l)**2.)
+        filtr = np.exp(-np.log(1.0+4.0*np.pi/self.nx*self.filterfac)*(wvx-self.cphi)**6./(self.nk-self.cphi)**6)
+        filtr[wvx<=self.cphi] = 1.
+        filtr[wvx>self.nk] = 0.
+
+        filtr_hypo=0.0*wvx+1.0
+        #filtr_hypo[wvx>0] =1./(1.+10.0*(4.*np.pi/self.nx)*(wvx[wvx>0]/10)**(-4))
+        #filtr_hypo[wvx>0] = 1.0/(1.0+10.0*(wvx[wvx>0]**2/100.0)**(-2))
+        #filtr_hypo = np.exp(-3.0*((wvx-self.cphi)/(1.0-self.cphi))**4)
+        filtr_hypo = np.exp(-self.rek*((wvx-5.0)/(1.0-5.0))**4)
+        filtr_hypo[wvx>5.0]=1
+        self.filtr = filtr*filtr_hypo
 
     def _filter(self, q):
         return self.filtr * q
@@ -720,17 +740,9 @@ class Model(PseudoSpectralKernel):
         )
 
         self.add_diagnostic('paramspec',
-            description='Spectral contribution of subgrid parameterization to energy (if present)',
+            description='Spectral contribution of subgrid parameterization (if present)',
             function=lambda self: self._calc_parameterization_spectrum(),
             units='m^2 s^-3',
-            dims=('l','k'),
-            skip_comparison=True,
-        )
-
-        self.add_diagnostic('ENSparamspec',
-            description='Spectral contribution of subgrid parameterization to enstrophy',
-            function=lambda self: self._calc_parameterization_enstrophy_spectrum(),
-            units='s^-3',
             dims=('l','k'),
             skip_comparison=True,
         )
@@ -749,11 +761,6 @@ class Model(PseudoSpectralKernel):
         dqh = self._calc_parameterization_contribution()
         height_ratios = (self.Hi / self.H)[:,np.newaxis,np.newaxis]
         return -np.real((height_ratios * np.conj(self.ph) * dqh).sum(axis=0)) / self.M**2
-
-    def _calc_parameterization_enstrophy_spectrum(self):
-        dqh = self._calc_parameterization_contribution()
-        height_ratios = (self.Hi / self.H)[:,np.newaxis,np.newaxis]
-        return np.real((height_ratios * np.conj(self.qh) * dqh).sum(axis=0)) / self.M**2
 
     def _calc_derived_fields(self):
         """Should be implemented by subclass."""

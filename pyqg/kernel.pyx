@@ -88,9 +88,14 @@ cdef class PseudoSpectralKernel:
     # spectral filter
     # TODO: figure out if this really needs to be public
     cdef public DTYPE_real_t [:, :] filtr
-
+    cdef public DTYPE_com_t [:, :] filtr_hypo
+    
     # friction parameter
     cdef public DTYPE_real_t rek
+    cdef public int nek
+    cdef public DTYPE_real_t filterfac
+    cdef public DTYPE_real_t cphi
+    
 
     # time
     # need to have a property to deal with resetting timestep
@@ -130,6 +135,9 @@ cdef class PseudoSpectralKernel:
         self.ll = np.zeros((self.nl), DTYPE_real)
         self._il = np.zeros((self.nl), DTYPE_com)
         self._k2l2 = np.zeros((self.nl, self.nk), DTYPE_real)
+
+        self.filtr = np.zeros((self.nl, self.nk), DTYPE_real)
+
 
         # initialize FFT inputs / outputs as byte aligned by pyfftw
         q = self._empty_real()
@@ -195,6 +203,11 @@ cdef class PseudoSpectralKernel:
 
         # friction
         self.rek = 0.0
+        self.nek = 1
+        self.cphi=1.0
+        self.filterfac=0.0
+ 
+
 
         # the tendency
         self.dqhdt = self._empty_com()
@@ -442,7 +455,8 @@ cdef class PseudoSpectralKernel:
         return
 
     def _do_friction(self):
-        self.__do_friction()
+        pass
+        # self.__do_friction()
 
     cdef void __do_friction(self) nogil:
         """Apply Ekman friction to lower layer tendency"""
@@ -453,10 +467,11 @@ cdef class PseudoSpectralKernel:
                       chunksize=self.chunksize,
                       num_threads=self.num_threads):
                 for i in range(self.nk):
-                    self.dqhdt[k,j,i] = (
-                     self.dqhdt[k,j,i] +
+                      if(i**2+j**2>0):
+                             self.dqhdt[k,j,i] = (
+                             self.dqhdt[k,j,i] +
                              (self.rek *
-                             self._k2l2[j,i] *
+                             (self._k2l2[j,i]**self.nek) *
                              self.ph[k,j,i]) )
         return
 
@@ -501,7 +516,7 @@ cdef class PseudoSpectralKernel:
                 for i in range(self.nk):
                     qh_new[k,j,i] = self.filtr[j,i] * (
                         self.qh[k,j,i] +
-                        dt1 * self.dqhdt[k,j,i] +
+                        dt1 * self.dqhdt[k,j,i] + 
                         dt2 * self.dqhdt_p[k,j,i] +
                         dt3 * self.dqhdt_pp[k,j,i]
                     )
@@ -573,6 +588,11 @@ cdef class PseudoSpectralKernel:
             self.Qy = Qy
             self._ikQy = 1j * (np.asarray(self.kk)[np.newaxis, :] *
                                np.asarray(Qy)[:, np.newaxis])
+    #property filtr:
+    #    def __get__(self):
+    #        return np.asarray(self.filtr)
+    #    def __set__(self, np.ndarray[DTYPE_real_t, ndim=2] filtr):
+    #        self.filtr = filtr
     property q:
         def __get__(self):
             return np.asarray(self.q)
