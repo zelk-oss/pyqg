@@ -191,13 +191,11 @@ def model_to_dataset_gl(ds, m, itime=None):
     if(itime==None):
         itime=0
 
-    variables = {}
     for vname in dim_database:
         if (vname=='times'):
-             ds[vname][itime]=m.t
-             ds['time'].data[itime]=m.t
+             ds[vname][itime] = m.t
         else:
-             ds[vname][itime,:,:,:] =getattr(m, vname, None).copy()
-
+             if hasattr(m, vname):
+                 ds[vname][itime,:,:,:] = getattr(m, vname, None).copy()
 
     return ds
